@@ -361,7 +361,10 @@ jobs:
           export OMNIVOICE_PORT=3999
           export VOICESTUDIO_UI_URL=http://localhost:3912
           export PLAYWRIGHT_CHANNEL=chromium
-          # CLEAN-ROOM (spec N-jaketame-2 §22): environment settings that keep the smoke server off the network and off the runner's real model cache.
+          # Smokes run with the Hugging Face hub offline, caching into a throwaway directory
+          # so neither the network nor the runner's real model cache is ever involved.
+          smoke_hub_cache=$(mktemp -d)
+          export HF_HUB_CACHE="$smoke_hub_cache" HF_HUB_OFFLINE=1
           bun run --cwd electron smoke:server > /tmp/voicestudio-electron-smoke.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
