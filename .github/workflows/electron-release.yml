@@ -80,8 +80,16 @@ jobs:
         run: |
           # stable (X.Y.Z) or beta (X.Y.Z-beta.N); any other shape fails here.
           echo "channel=$(python3 scripts/prepare_electron_release.py --print-channel)" >> "$GITHUB_OUTPUT"
-  package:
+  omnivoice-tts:
+    # The OmniVoice GGUF runtime each installer ships under resources/bin (#2780).
     needs: validate
+    uses: ./.github/workflows/build-omnivoice-tts.yml
+    with:
+      ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+      desktop: true
+
+  package:
+    needs: [validate, omnivoice-tts]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     continue-on-error: ${{ matrix.experimental == true }}
@@ -94,16 +102,21 @@ jobs:
             arch: x64
             target: x86_64-unknown-linux-gnu
             flags: --linux --x64
+            gguf_platform: linux-x86_64
           - runner: windows-2022
             platform: win32
             arch: x64
             target: x86_64-pc-windows-msvc
             flags: --win --x64
+            gguf_platform: windows-x86_64
           - runner: windows-11-arm
             platform: win32
             arch: arm64
             target: aarch64-pc-windows-msvc
             flags: --win --arm64
+            # Windows on ARM runs the emulated x64 Python runtime, which
+            # spawns the x64 GGUF runtime.
+            gguf_platform: windows-x86_64
             # Windows on ARM is new: a failed leg must not block the four
             # established targets. check_electron_release_assets.py verifies the
             # arm64 feed only when its manifest was published.
@@ -113,16 +126,21 @@ jobs:
             arch: arm64
             target: aarch64-apple-darwin
             flags: --mac --arm64
+            gguf_platform: darwin-arm64
           - runner: macos-15-intel
             platform: darwin
             arch: x64
             target: x86_64-apple-darwin
             flags: --mac --x64
+            # No GGUF runtime: Intel Macs cannot run the local backend.
+            gguf_platform: ''
     defaults:
       run:
         shell: bash
     env:
       VOICESTUDIO_RUST_TARGET: ${{ matrix.target }}
+      # packaging-contract.mjs requires this runtime in the installer.
+      VOICESTUDIO_OMNIVOICE_TTS_PLATFORM: ${{ matrix.gguf_platform }}
       VOICESTUDIO_UPDATE_CHANNEL: electron-${{ needs.validate.outputs.channel }}-${{ matrix.platform }}-${{ matrix.arch }}
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       VITE_POSTHOG_KEY: ${{ secrets.POSTHOG_PROJECT_TOKEN }}
@@ -169,6 +187,12 @@ jobs:
           copyFileSync(source, destination);
           if (process.platform !== 'win32') chmodSync(destination, 0o755);
           NODE
+      - name: Stage the OmniVoice GGUF runtime
+        if: matrix.gguf_platform != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: omnivoice-tts-${{ matrix.gguf_platform }}
+          path: electron/build/omnivoice-tts
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Validate and build Electron
